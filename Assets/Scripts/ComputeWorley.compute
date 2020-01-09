@@ -1,0 +1,166 @@
+﻿
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#pragma kernel CSNormalize
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+//RWTexture3D<float4> Result;
+
+RWTexture3D<float4> Result;
+//RWTexture2D<float4> Result2D;
+Texture3D<float4> tempTex;
+
+SamplerState _LinearClamp;
+SamplerState samplertempTex;
+int numCells;
+int resolution;
+static const int minMaxAccuracy = 10000000;
+static const int numThreads =8;
+StructuredBuffer<float3> points;
+RWStructuredBuffer<int> minMax;
+//float4 channelMask = float4(1,0,0,0);
+
+static const int3 offsets[] =
+{
+	// centre
+	int3(0,0,0),
+	// front face
+	int3(0,0,1),
+	int3(-1,1,1),
+	int3(-1,0,1),
+	int3(-1,-1,1),
+	int3(0,1,1),
+	int3(0,-1,1),
+	int3(1,1,1),
+	int3(1,0,1),
+	int3(1,-1,1),
+	// back face
+	int3(0,0,-1),
+	int3(-1,1,-1),
+	int3(-1,0,-1),
+	int3(-1,-1,-1),
+	int3(0,1,-1),
+	int3(0,-1,-1),
+	int3(1,1,-1),
+	int3(1,0,-1),
+	int3(1,-1,-1),
+	// ring around centre
+	int3(-1,1,0),
+	int3(-1,0,0),
+	int3(-1,-1,0),
+	int3(0,1,0),
+	int3(0,-1,0),
+	int3(1,1,0),
+	int3(1,0,0),
+	int3(1,-1,0)
+};
+float minComponent(int3 a)
+{
+	return min(a.x, min(a.y, a.z));
+}
+
+float maxComponent(float3 a)
+{
+	return max(a.x, max(a.y, a.z));
+}
+float CalculateWorleyValue(float3 pos) 
+{
+	int3 cell =  floor(pos * numCells);
+	float minDist = 1;
+
+	for (int k = -1; k < 2; k++)
+	{
+		for (int j = -1; j < 2; j++)
+		{
+			for (int i = -1; i < 2; i++)
+			{
+				int3 offset = int3(i, j, k);
+				int3 neighbourCell= cell + offset;
+
+				if (minComponent(neighbourCell) == -1 || maxComponent(neighbourCell) == numCells) {
+
+					int3 wrappedCell = (neighbourCell + numCells) % (uint3)numCells;
+					int wrappedCellIndex = wrappedCell.x + wrappedCell.y * numCells + wrappedCell.z * (numCells * numCells);
+					float3 wrappedPoint = points[wrappedCellIndex];
+					for (int x = -1; x < 2; x++)
+					{
+						for (int y = -1; y < 2; y++)
+						{
+							for (int z = -1; z < 2; z++)
+							{
+								wrappedPoint += float3(x,y,z);
+								//minDist = distance(wrappedPoint, pos);
+								minDist = min(minDist, distance(wrappedPoint, pos));
+							}
+						}
+					}
+				}
+				else {
+					int neighbourCellID = neighbourCell.x + (neighbourCell.y + neighbourCell.z * numCells) * numCells;
+					//minDist = distance(pos, points[neighbourCellID]);
+					minDist = min(minDist, distance(pos, points[neighbourCellID]));
+				}
+			}
+		}
+	}
+	return minDist;
+}
+//float worleys(StructuredBuffer<float3> points, int numCells, float3 samplePos) {
+//	samplePos = (samplePos ) % 1;
+//	int3 cellID = floor(samplePos * numCells);
+//	float minSqrDst = 1;
+//
+//	// Loop over current cell + 26 adjacent cells to find closest point to samplePos
+//	for (int cellOffsetIndex = 0; cellOffsetIndex < 27; cellOffsetIndex++) {
+//		int3 adjID = cellID + offsets[cellOffsetIndex];
+//		// Adjacent cell is outside map, so wrap around to other side to allow for seamless tiling
+//		if (minComponent(adjID) == -1 || maxComponent(adjID) == numCells) {
+//			int3 wrappedID = (adjID + numCells) % (uint3)numCells;
+//			int adjCellIndex = wrappedID.x + numCells * (wrappedID.y + wrappedID.z * numCells);
+//			float3 wrappedPoint = points[adjCellIndex];
+//			// Offset the wrappedPoint by all offsets to find which is closest to samplePos
+//			for (int wrapOffsetIndex = 0; wrapOffsetIndex < 27; wrapOffsetIndex++) {
+//				float3 sampleOffset = (samplePos - (wrappedPoint + offsets[wrapOffsetIndex]));
+//				minSqrDst = min(minSqrDst, dot(sampleOffset, sampleOffset));
+//			}
+//		}
+//		// Adjacent cell is inside map, so calculate sqrDst from samplePos to cell point
+//		else {
+//			int adjCellIndex = adjID.x + numCells * (adjID.y + adjID.z * numCells);
+//			float3 sampleOffset = samplePos - points[adjCellIndex];
+//			minSqrDst = min(minSqrDst, dot(sampleOffset, sampleOffset));
+//		}
+//	}
+//	return sqrt(minSqrDst);
+//}
+[numthreads(numThreads, numThreads, numThreads)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	float3 pos = id / (float)resolution;
+    // TODO: insert actual code here!
+	float worley = CalculateWorleyValue(pos);
+	//float worley = worleys(points, numCells, pos);
+	int value = (int)(worley * minMaxAccuracy);//converting to int to do atomic operation, multiply with a verilarge value to preserve precision
+	InterlockedMin(minMax[0], value);
+	InterlockedMax(minMax[1], value);
+	float jaya = (value - (float)48003) / (9951997.0);
+	//jaya	 *=1.2;
+	Result[id] = float4(jaya, 0, 0, 0);
+}
+[numthreads(numThreads, numThreads, numThreads)]
+void CSNormalize(uint3 id : SV_DispatchThreadID)
+{
+
+	float minVal = (minMax[0]) / (float)minMaxAccuracy;
+	float maxVal = (minMax[1]) / (float)minMaxAccuracy;
+	float3 uvw = id.xyz / (float)resolution;
+	float4 normalizedVal = (tempTex.SampleLevel(_LinearClamp, uvw, 0) - (float)minVal) / (float)(maxVal - minVal);
+	/*if (Result[id]<0.5) {
+		Result[id] = float4(0, normalizedVal.x, 0, 0);
+	}
+	else {
+		Result[id] = float4(normalizedVal.x, 0, 0, 0);
+	}*/
+	//Result[id] = float4(0, normalizedVal.x,0,0);
+}	

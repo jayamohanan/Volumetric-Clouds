@@ -1,0 +1,19 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture3D<float4> Result;
+Texture3D<float4> Source;
+SamplerState _LinearClamp;
+RWStructuredBuffer<int> abc;
+[numthreads(8,8,8)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+	if (id.x =50 && id.y ==50 && id.z ==50) {
+		abc[0] = id.x + id.y + id.z;
+	}
+	
+    Result[id] = Source.SampleLevel(_LinearClamp, float3(id.xyz), 0);
+}
